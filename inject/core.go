@@ -8,7 +8,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"go-injector/utils"
+	"github.com/jeebeys/go-injector/utils"
 )
 
 var NotExistBeanError = errors.New("Not exeis bean")
