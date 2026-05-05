@@ -9,21 +9,9 @@ const (
 	AutowireTagKey = "autowire"
 )
 
-func GetFullUniqueName(instance interface{}) string {
-
+func GetFullUniqueName(alias string, instance interface{}) string {
 	t := reflect.TypeOf(instance)
-	if t == nil {
-		panic("GetFullUniqueName parameter can't be nil")
-	}
-	//	not support slice map inject
-	if kind := t.Kind(); kind == reflect.Slice || kind == reflect.Map {
-		panic("type can't be slice or map")
-	}
-
-	if pkgPath := t.PkgPath(); pkgPath != "" {
-		return fmt.Sprintf("%v/%v", pkgPath, t.String())
-	}
-	return t.String()
+	return fmt.Sprintf("%s@%p", t.String(), &instance)
 }
 
 func FieldNeedToInject(f reflect.StructField) bool {

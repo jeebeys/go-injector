@@ -2,8 +2,9 @@ package go_injector
 
 import (
 	"fmt"
-	"go-injector/inject"
 	"testing"
+
+	"github.com/jeebeys/go-injector/inject"
 )
 
 type Bean1 struct {
@@ -11,24 +12,30 @@ type Bean1 struct {
 }
 
 type Bean2 struct {
-	bean1 *Bean1 `autowire:""`
-	bean2 *Bean1 `autowire:""`
+	bean1  *Bean1            `autowire:"bean11"`
+	bean2  *Bean1            `autowire:"bean12"`
+	beans1 map[string]*Bean1 `autowire:""`
+	beans2 []*Bean1          `autowire:""`
 }
 
 func TestName(t *testing.T) {
 	BeanFactory := inject.NewDefaultBeanFactory()
-	BeanFactory.RegisterBeanWithName("bean1", &Bean1{Name: "JuST4iT"}).Init(func() {
-		fmt.Println("Bean1")
+
+	BeanFactory.RegisterBeanWithName("bean12", &Bean1{Name: "bean12"}).Init(func() {
+		fmt.Println("bean12 init")
+	})
+	BeanFactory.RegisterBeanWithName("bean11", &Bean1{Name: "bean11"}).Init(func() {
+		fmt.Println("bean11 init")
 	})
 	BeanFactory.RegisterBean(&Bean2{}).Init(func(b *Bean2) {
-		fmt.Println("Bean2", b.bean2.Name)
+		fmt.Println("Bean2 init", b.bean2.Name)
+		fmt.Println("Bean2 init", b.beans1)
+		fmt.Println("Bean2 init", b.beans2)
 	})
 
 	_ = BeanFactory.AutoWire()
-	bean1, _ := BeanFactory.GetBeanByName("bean1")
-
+	bean1, _ := BeanFactory.GetBeanByName("bean11")
 	bean2, _ := BeanFactory.GetBeanByType((*Bean2)(nil))
-
-	fmt.Println("bean11", bean1.BeanInstance.(*Bean1).Name)
-	fmt.Println("bean22", bean2.BeanInstance.(*Bean2).bean2.Name)
+	fmt.Println("bean11 call", bean1.BeanInstance.(*Bean1).Name)
+	fmt.Println("bean22 call", bean2.BeanInstance.(*Bean2).bean2.Name)
 }

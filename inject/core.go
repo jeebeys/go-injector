@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"unsafe"
 
@@ -48,6 +47,7 @@ type DefaultBeanFactory struct {
 	beanAliasMap  map[string]string // bean alias bean map
 	registeStatus RegisteStatus     //regeiste status
 	mutx          sync.RWMutex      //sync.mutx
+	bean          *Bean
 }
 
 var _ BeanFactory = &DefaultBeanFactory{} //static check
@@ -75,15 +75,17 @@ func (defaultBeanFactory *DefaultBeanFactory) createBean(aliasName string, insta
 		panic(fmt.Sprintf("%#v is not a ptr", instance))
 	}
 
-	bean := &Bean{}
-	bean.BeanType = reflect.TypeOf(instance)
-	bean.BeanValue = reflect.ValueOf(instance)
-	bean.BeanInstance = instance
+	defaultBeanFactory.bean = &Bean{}
+	defaultBeanFactory.bean.BeanType = reflect.TypeOf(instance)
+	defaultBeanFactory.bean.BeanValue = reflect.ValueOf(instance)
+	defaultBeanFactory.bean.BeanInstance = instance
 	if aliasName != "" {
-		bean.Alias = aliasName
+		defaultBeanFactory.bean.Alias = aliasName
+	} else {
+		defaultBeanFactory.bean.Alias = defaultBeanFactory.bean.BeanType.String()
 	}
-	bean.UniqueName = utils.GetFullUniqueName(instance)
-	return bean
+	defaultBeanFactory.bean.UniqueName = fmt.Sprintf("%s@%p", defaultBeanFactory.bean.Alias, defaultBeanFactory.bean.BeanInstance)
+	return defaultBeanFactory.bean
 }
 
 // CanAutoWire check can autowire
@@ -94,7 +96,7 @@ func (defaultBeanFactory *DefaultBeanFactory) CanAutoWire() bool {
 	return false
 }
 
-// RegisterBean register
+// RegisterBeanWithName RegisterBean register
 func (defaultBeanFactory *DefaultBeanFactory) RegisterBeanWithName(aliasName string, instance interface{}) *DefaultBeanFactory {
 	bean := defaultBeanFactory.createBean(aliasName, instance)
 	t := reflect.TypeOf(instance)
@@ -132,7 +134,6 @@ func (defaultBeanFactory *DefaultBeanFactory) GetBeanByName(beanName string) (*B
 }
 
 func (defaultBeanFactory *DefaultBeanFactory) GetBeanByType(beanType interface{}) (*Bean, error) {
-
 	var bean *Bean
 	var count = 0
 	for _, val := range defaultBeanFactory.beanMap {
@@ -153,7 +154,6 @@ func (defaultBeanFactory *DefaultBeanFactory) GetBeanByType(beanType interface{}
 
 func (defaultBeanFactory *DefaultBeanFactory) Init(fn any) {
 	funcType := reflect.TypeOf(fn)
-	funcValue := reflect.ValueOf(fn)
 	if funcType.Kind() != reflect.Func {
 		panic(fmt.Sprintf("fn is func(){} or func(*bean){}"))
 	}
@@ -162,14 +162,7 @@ func (defaultBeanFactory *DefaultBeanFactory) Init(fn any) {
 		panic(fmt.Sprintf("fn is func(){} or func(*bean){}"))
 	}
 
-	if funcType.NumIn() == 0 {
-		defaultBeanFactory.funcMap[funcValue.String()] = fn
-	}
-
-	if funcType.NumIn() == 1 {
-		paramType := funcType.In(0)
-		defaultBeanFactory.funcMap[paramType.String()] = fn
-	}
+	defaultBeanFactory.funcMap[defaultBeanFactory.bean.UniqueName] = fn
 
 }
 
@@ -195,32 +188,34 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 				continue
 			}
 
-			alias := tag.Get(utils.AutowireTagKey)
-			var bean *Bean
-			var fullUniqueName string
-			var ok bool
-			if alias != "" {
-				alias = defaultBeanFactory.getInjectName(alias)
-				fullUniqueName, ok = defaultBeanFactory.beanAliasMap[alias]
-				if !ok {
-					fullUniqueName = valueType.Type().String()
-				}
+			if valueType.Type().Kind() == reflect.Map {
+				valueMap := defaultBeanFactory.getInjectMaps(valueType.Type().Elem())
+				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
+				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(valueMap)
+			} else if valueType.Type().Kind() == reflect.Slice {
+				valueSlice := defaultBeanFactory.getInjectSlice(valueType.Type().Elem())
+				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
+				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(valueSlice)
 			} else {
-				fullUniqueName = valueType.Type().String()
+				alias := tag.Get(utils.AutowireTagKey)
+				var bean *Bean
+				var fullUniqueName string
+				if alias != "" {
+					fullUniqueName, _ = defaultBeanFactory.beanAliasMap[alias]
+				} else {
+					fullUniqueName = fmt.Sprintf("%s@%p", valueType.Type().String(), &val.BeanInstance)
+				}
+				bean, _ = defaultBeanFactory.beanMap[fullUniqueName]
+				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
+				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(bean.BeanValue)
 			}
-			bean, ok = defaultBeanFactory.beanMap[fullUniqueName]
-			if !ok {
-				panic(fmt.Sprintf("the bean is not exists:%v", fullUniqueName))
-			}
-
-			valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
-			reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(bean.BeanValue)
 		}
 	}
 
 	for key, fn := range defaultBeanFactory.funcMap {
 		funcType := reflect.TypeOf(fn)
 		_funcVal := reflect.ValueOf(fn)
+		//无参数时
 		if funcType.NumIn() == 0 {
 			_funcVal.Call([]reflect.Value{})
 		}
@@ -234,12 +229,27 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 	return nil
 }
 
-func (defaultBeanFactory *DefaultBeanFactory) getInjectName(tag string) string {
-	tags := strings.Split(tag, ",")
-	if len(tags) == 0 {
-		return ""
+func (defaultBeanFactory *DefaultBeanFactory) getInjectMaps(beanType reflect.Type) reflect.Value {
+	mapType := reflect.MapOf(reflect.TypeOf(""), beanType)
+	mapValue := reflect.MakeMap(mapType)
+	for key, val := range defaultBeanFactory.beanMap {
+		if val.BeanType == beanType {
+			_key := reflect.ValueOf(key)
+			_val := reflect.ValueOf(val.BeanInstance)
+			mapValue.SetMapIndex(_key, _val)
+		}
 	}
-	return tags[0]
+	return mapValue
+}
+
+func (defaultBeanFactory *DefaultBeanFactory) getInjectSlice(beanType reflect.Type) reflect.Value {
+	sliceValue := reflect.MakeSlice(reflect.SliceOf(beanType), 0, 0)
+	for _, val := range defaultBeanFactory.beanMap {
+		if val.BeanType == beanType {
+			sliceValue = reflect.Append(sliceValue, reflect.ValueOf(val.BeanInstance))
+		}
+	}
+	return sliceValue
 }
 
 func (defaultBeanFactory *DefaultBeanFactory) string() {
