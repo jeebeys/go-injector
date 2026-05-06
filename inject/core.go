@@ -79,12 +79,14 @@ func (defaultBeanFactory *DefaultBeanFactory) createBean(aliasName string, insta
 	defaultBeanFactory.bean.BeanType = reflect.TypeOf(instance)
 	defaultBeanFactory.bean.BeanValue = reflect.ValueOf(instance)
 	defaultBeanFactory.bean.BeanInstance = instance
+
 	if aliasName != "" {
 		defaultBeanFactory.bean.Alias = aliasName
+		defaultBeanFactory.bean.UniqueName = fmt.Sprintf("%s@%p", defaultBeanFactory.bean.Alias, defaultBeanFactory.bean.BeanInstance)
 	} else {
-		defaultBeanFactory.bean.Alias = defaultBeanFactory.bean.BeanType.String()
+		defaultBeanFactory.bean.Alias = fmt.Sprintf("%s_%p", defaultBeanFactory.bean.BeanType.String(), defaultBeanFactory.bean.BeanInstance)
+		defaultBeanFactory.bean.UniqueName = fmt.Sprintf("%s@%p", defaultBeanFactory.bean.BeanType.String(), defaultBeanFactory.bean.BeanInstance)
 	}
-	defaultBeanFactory.bean.UniqueName = fmt.Sprintf("%s@%p", defaultBeanFactory.bean.Alias, defaultBeanFactory.bean.BeanInstance)
 	return defaultBeanFactory.bean
 }
 
@@ -107,16 +109,13 @@ func (defaultBeanFactory *DefaultBeanFactory) RegisterBeanWithName(aliasName str
 	return defaultBeanFactory
 }
 func (defaultBeanFactory *DefaultBeanFactory) addToFactory(bean *Bean) {
-	if _, ok := defaultBeanFactory.beanMap[bean.UniqueName]; ok {
+	if _, ok := defaultBeanFactory.beanAliasMap[bean.Alias]; ok {
 		panic(fmt.Sprintf("can not repeat registe bean,alias:%v,instance:%#v", bean.Alias, bean.BeanInstance))
 	}
+
+	defaultBeanFactory.beanAliasMap[bean.Alias] = bean.UniqueName
 	defaultBeanFactory.beanMap[bean.UniqueName] = bean
-	aliasName := bean.Alias
-	if aliasName != "" {
-		if _, ok := defaultBeanFactory.beanAliasMap[aliasName]; !ok {
-			defaultBeanFactory.beanAliasMap[aliasName] = bean.UniqueName
-		}
-	}
+
 }
 
 // GetBeanByName get bean by name or alias name
@@ -189,25 +188,25 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 			}
 
 			if valueType.Type().Kind() == reflect.Map {
-				valueMap := defaultBeanFactory.getInjectMaps(valueType.Type().Elem())
+				valueMap := defaultBeanFactory.getBeansForMaps(valueType.Type().Elem())
 				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
 				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(valueMap)
 			} else if valueType.Type().Kind() == reflect.Slice {
-				valueSlice := defaultBeanFactory.getInjectSlice(valueType.Type().Elem())
+				valueSlice := defaultBeanFactory.getBeansForSlice(valueType.Type().Elem())
 				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
 				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(valueSlice)
 			} else {
-				alias := tag.Get(utils.AutowireTagKey)
-				var bean *Bean
-				var fullUniqueName string
-				if alias != "" {
-					fullUniqueName, _ = defaultBeanFactory.beanAliasMap[alias]
+				aliasName := tag.Get(utils.AutowireTagKey)
+				var value reflect.Value
+				if aliasName != "" {
+					value = defaultBeanFactory.getBeanForName(aliasName, elemType.Name()+"."+fieldType.Name)
 				} else {
-					fullUniqueName = fmt.Sprintf("%s@%p", valueType.Type().String(), &val.BeanInstance)
+					value = defaultBeanFactory.getBeanForType(valueType.Type(), elemType.Name()+"."+fieldType.Name)
 				}
-				bean, _ = defaultBeanFactory.beanMap[fullUniqueName]
-				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
-				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(bean.BeanValue)
+				if value.IsValid() {
+					valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
+					reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(value)
+				}
 			}
 		}
 	}
@@ -229,7 +228,37 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 	return nil
 }
 
-func (defaultBeanFactory *DefaultBeanFactory) getInjectMaps(beanType reflect.Type) reflect.Value {
+func (defaultBeanFactory *DefaultBeanFactory) getBeanForName(beanName string, fieldName string) reflect.Value {
+	if UniqueName, ok := defaultBeanFactory.beanAliasMap[beanName]; ok {
+		if bean, ok := defaultBeanFactory.beanMap[UniqueName]; ok {
+			return reflect.ValueOf(bean.BeanInstance)
+		}
+	}
+	panic(fmt.Sprintf("Field %s Inject Error: %s is not exist", fieldName, beanName))
+}
+
+func (defaultBeanFactory *DefaultBeanFactory) getBeanForType(beanType reflect.Type, fieldName string) reflect.Value {
+	var value reflect.Value
+	var count = 0
+
+	for _, val := range defaultBeanFactory.beanMap {
+		if val.BeanType == beanType {
+			value = reflect.ValueOf(val.BeanInstance)
+			count = count + 1
+		}
+	}
+	if count == 0 {
+		panic(fmt.Sprintf("Field %s Inject Error: %v is not exist", fieldName, beanType))
+	}
+
+	if count != 1 {
+		panic(fmt.Sprintf("Field %s Inject Error: %v is more than one", fieldName, beanType))
+	}
+
+	return value
+}
+
+func (defaultBeanFactory *DefaultBeanFactory) getBeansForMaps(beanType reflect.Type) reflect.Value {
 	mapType := reflect.MapOf(reflect.TypeOf(""), beanType)
 	mapValue := reflect.MakeMap(mapType)
 	for key, val := range defaultBeanFactory.beanMap {
@@ -242,7 +271,7 @@ func (defaultBeanFactory *DefaultBeanFactory) getInjectMaps(beanType reflect.Typ
 	return mapValue
 }
 
-func (defaultBeanFactory *DefaultBeanFactory) getInjectSlice(beanType reflect.Type) reflect.Value {
+func (defaultBeanFactory *DefaultBeanFactory) getBeansForSlice(beanType reflect.Type) reflect.Value {
 	sliceValue := reflect.MakeSlice(reflect.SliceOf(beanType), 0, 0)
 	for _, val := range defaultBeanFactory.beanMap {
 		if val.BeanType == beanType {
