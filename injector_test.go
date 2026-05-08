@@ -7,6 +7,10 @@ import (
 	"github.com/jeebeys/go-injector/inject"
 )
 
+type Bean0 struct {
+	Name string
+}
+
 type Bean1 struct {
 	Name string
 }
@@ -25,6 +29,10 @@ type Bean3 struct {
 
 func TestName(t *testing.T) {
 	BeanFactory := inject.NewDefaultBeanFactory()
+
+	//BeanFactory.RegisterBean(Bean0{Name: "bean1-1"}).Init(func(b *Bean1) {
+	//	fmt.Println("bean1-1 init", b.Name)
+	//})
 
 	BeanFactory.RegisterBeanWithName("bean1-1", &Bean1{Name: "bean1-1"}).Init(func(b *Bean1) {
 		fmt.Println("bean1-1 init", b.Name)

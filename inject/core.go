@@ -195,7 +195,7 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 				valueSlice := defaultBeanFactory.getBeansForSlice(valueType.Type().Elem())
 				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
 				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(valueSlice)
-			} else {
+			} else if valueType.Type().Kind() == reflect.Ptr {
 				aliasName := tag.Get(utils.AutowireTagKey)
 				var value reflect.Value
 				if aliasName != "" {
