@@ -112,7 +112,6 @@ func (defaultBeanFactory *DefaultBeanFactory) addToFactory(bean *Bean) {
 
 	defaultBeanFactory.beanAliasMap[bean.Alias] = bean.UniqueName
 	defaultBeanFactory.beanMap[bean.UniqueName] = bean
-
 }
 
 // GetBeanByName get bean by name or alias name
