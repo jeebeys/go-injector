@@ -6,19 +6,20 @@ import (
 	"reflect"
 	"sync"
 	"unsafe"
-
-	"github.com/jeebeys/go-injector/utils"
 )
 
-var NotExistBeanError = errors.New("Not exeis bean")
+var NotExistBeanError = errors.New("not exist bean")
 var AutoWireFinishedError = errors.New("autowire is finish,can not autowire")
 
-type RegisteStatus uint
+type Status uint
 
 const (
-	Initialize     RegisteStatus = iota //initialize status
-	Registeing                          // regeisteing
-	InjectFinished                      // Inject finished
+	AutowireTagKey = "autowire"
+)
+const (
+	Initialize  Status = iota //initialize status
+	Registering               // Registering
+	Finished                  // Inject finished
 )
 
 // Bean
@@ -42,12 +43,12 @@ type BeanFactory interface {
 }
 
 type DefaultBeanFactory struct {
-	beanMap       map[string]*Bean // bean map
-	funcMap       map[string]any
-	beanAliasMap  map[string]string // bean alias bean map
-	registeStatus RegisteStatus     //regeiste status
-	mutx          sync.RWMutex      //sync.mutx
-	bean          *Bean
+	beanMap      map[string]*Bean // bean map
+	funcMap      map[string]any
+	beanAliasMap map[string]string // bean alias bean map
+	status       Status            // Autowire status
+	mutex        sync.RWMutex      // sync.mutx
+	bean         *Bean
 }
 
 var _ BeanFactory = &DefaultBeanFactory{} //static check
@@ -61,20 +62,12 @@ func NewDefaultBeanFactory() *DefaultBeanFactory {
 	}
 }
 
-// RegisterBean register a bean to BeanFactory
-func (defaultBeanFactory *DefaultBeanFactory) RegisterBean(instance interface{}) *DefaultBeanFactory {
-	bean := defaultBeanFactory.createBean("", instance)
-	defaultBeanFactory.mutx.Lock()
-	defer defaultBeanFactory.mutx.Unlock()
-	defaultBeanFactory.addToFactory(bean)
-	return defaultBeanFactory
-}
-
 func (defaultBeanFactory *DefaultBeanFactory) createBean(aliasName string, instance interface{}) *Bean {
-	if !utils.CanRegeiste(instance) {
+	t := reflect.TypeOf(instance)
+	if !(t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct) {
 		panic(fmt.Sprintf("%#v is not a ptr", instance))
 	}
-
+	//isStruct := reflect.TypeOf(instance).Kind() == reflect.Struct
 	defaultBeanFactory.bean = &Bean{}
 	defaultBeanFactory.bean.BeanType = reflect.TypeOf(instance)
 	defaultBeanFactory.bean.BeanValue = reflect.ValueOf(instance)
@@ -83,6 +76,7 @@ func (defaultBeanFactory *DefaultBeanFactory) createBean(aliasName string, insta
 	if aliasName != "" {
 		defaultBeanFactory.bean.Alias = aliasName
 		defaultBeanFactory.bean.UniqueName = fmt.Sprintf("%s@%p", defaultBeanFactory.bean.Alias, defaultBeanFactory.bean.BeanInstance)
+
 	} else {
 		defaultBeanFactory.bean.Alias = fmt.Sprintf("%s_%p", defaultBeanFactory.bean.BeanType.String(), defaultBeanFactory.bean.BeanInstance)
 		defaultBeanFactory.bean.UniqueName = fmt.Sprintf("%s@%p", defaultBeanFactory.bean.BeanType.String(), defaultBeanFactory.bean.BeanInstance)
@@ -92,19 +86,22 @@ func (defaultBeanFactory *DefaultBeanFactory) createBean(aliasName string, insta
 
 // CanAutoWire check can autowire
 func (defaultBeanFactory *DefaultBeanFactory) CanAutoWire() bool {
-	if defaultBeanFactory.registeStatus == Initialize {
+	if defaultBeanFactory.status == Initialize {
 		return true
 	}
 	return false
 }
 
+// RegisterBean register a bean to BeanFactory
+func (defaultBeanFactory *DefaultBeanFactory) RegisterBean(instance interface{}) *DefaultBeanFactory {
+	return defaultBeanFactory.RegisterBeanWithName("", instance)
+}
+
 // RegisterBeanWithName RegisterBean register
 func (defaultBeanFactory *DefaultBeanFactory) RegisterBeanWithName(aliasName string, instance interface{}) *DefaultBeanFactory {
 	bean := defaultBeanFactory.createBean(aliasName, instance)
-	t := reflect.TypeOf(instance)
-	if t.Kind() != reflect.Ptr {
-		panic(fmt.Sprintf("inject struct must be ptr.%v", instance))
-	}
+	defaultBeanFactory.mutex.Lock()
+	defer defaultBeanFactory.mutex.Unlock()
 	defaultBeanFactory.addToFactory(bean)
 	return defaultBeanFactory
 }
@@ -167,15 +164,15 @@ func (defaultBeanFactory *DefaultBeanFactory) Init(fn any) {
 
 // AutoWire finish to inject
 func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
-	defaultBeanFactory.mutx.Lock()
-	defer defaultBeanFactory.mutx.Unlock()
+	defaultBeanFactory.mutex.Lock()
+	defer defaultBeanFactory.mutex.Unlock()
 	if !defaultBeanFactory.CanAutoWire() {
 		return AutoWireFinishedError
 	}
 
-	defaultBeanFactory.registeStatus = Registeing
-
+	defaultBeanFactory.status = Registering
 	for _, val := range defaultBeanFactory.beanMap {
+
 		elemType := val.BeanType.Elem()
 		elemVal := val.BeanValue.Elem()
 		for i := 0; i < elemType.NumField(); i++ {
@@ -183,7 +180,7 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 			valueType := elemVal.Field(i)
 
 			tag := fieldType.Tag
-			if !utils.FieldNeedToInject(fieldType) {
+			if _, ok := tag.Lookup(AutowireTagKey); !ok {
 				continue
 			}
 
@@ -196,7 +193,7 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 				valuePtr := unsafe.Pointer(valueType.UnsafeAddr())
 				reflect.NewAt(valueType.Type(), valuePtr).Elem().Set(valueSlice)
 			} else if valueType.Type().Kind() == reflect.Ptr {
-				aliasName := tag.Get(utils.AutowireTagKey)
+				aliasName := tag.Get(AutowireTagKey)
 				var value reflect.Value
 				if aliasName != "" {
 					value = defaultBeanFactory.getBeanForName(aliasName, elemType.Name()+"."+fieldType.Name)
@@ -224,7 +221,7 @@ func (defaultBeanFactory *DefaultBeanFactory) AutoWire() error {
 		}
 	}
 
-	defaultBeanFactory.registeStatus = InjectFinished
+	defaultBeanFactory.status = Finished
 	return nil
 }
 
@@ -281,7 +278,7 @@ func (defaultBeanFactory *DefaultBeanFactory) getBeansForSlice(beanType reflect.
 	return sliceValue
 }
 
-func (defaultBeanFactory *DefaultBeanFactory) string() {
+func (defaultBeanFactory *DefaultBeanFactory) String() {
 	for k, v := range defaultBeanFactory.beanMap {
 		fmt.Printf("k:%#v,v:%#v \n", k, v)
 	}
