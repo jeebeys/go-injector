@@ -56,11 +56,14 @@ func TestName(t *testing.T) {
 	})
 
 	_ = BeanFactory.AutoWire()
-	bean1, _ := BeanFactory.GetBeanByName("bean1-1")
+	//bean1, _ := BeanFactory.GetBeanByName("bean1-1")
 	bean3, _ := BeanFactory.GetBeanByType((*Bean3)(nil))
 
-	fmt.Println("bean11 call", bean1.BeanInstance.(*Bean1).Name)
-	fmt.Println("bean22 call", bean3.BeanInstance.(*Bean3).bean2.Name)
-	fmt.Println("bean00 call", bean3.BeanInstance.(*Bean3).bean0.Name)
-	fmt.Println("BeanFactory.String()")
+	fmt.Println("bean1 call", bean3.BeanInstance.(*Bean3).beans1)
+
+	//fmt.Println("BeanFactory.String()")
+	//fmt.Println("bean11 call", bean1.BeanInstance.(*Bean1).Name)
+	//fmt.Println("bean22 call", bean3.BeanInstance.(*Bean3).bean2.Name)
+	//fmt.Println("bean00 call", bean3.BeanInstance.(*Bean3).bean0.Name)
+	//fmt.Println("BeanFactory.String()")
 }

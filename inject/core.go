@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -257,9 +258,11 @@ func (defaultBeanFactory *DefaultBeanFactory) getBeanForType(beanType reflect.Ty
 func (defaultBeanFactory *DefaultBeanFactory) getBeansForMaps(beanType reflect.Type) reflect.Value {
 	mapType := reflect.MapOf(reflect.TypeOf(""), beanType)
 	mapValue := reflect.MakeMap(mapType)
+
 	for key, val := range defaultBeanFactory.beanMap {
 		if val.BeanType == beanType {
-			_key := reflect.ValueOf(key)
+			parts := strings.Split(key, "@")
+			_key := reflect.ValueOf(parts[0])
 			_val := reflect.ValueOf(val.BeanInstance)
 			mapValue.SetMapIndex(_key, _val)
 		}
